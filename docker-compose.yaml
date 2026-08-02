@@ -1,0 +1,34 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: jsignal-postgres
+    environment:
+      POSTGRES_DB: jsignal
+      POSTGRES_USER: jsignal
+      POSTGRES_PASSWORD: jsignal
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jsignal -d jsignal"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  jsignal-be:
+    image: ghcr.io/jaggornaut/jsignal-be:latest
+    container_name: jsignal-be
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      MQTT_HOST: ${MQTT_HOST:-host.docker.internal}
+    volumes:
+      - ./config:/app/config:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports: ["8080:8080"]
+
+volumes:
+  pgdata:

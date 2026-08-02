@@ -1,0 +1,10 @@
+/target
+.env
+/config/*
+!/config/.gitkeep
+*.log
+.idea/
+*.iml
+.vscode/
+.claude/
+.DS_Store

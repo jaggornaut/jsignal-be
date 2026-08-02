@@ -1,0 +1,47 @@
+spring:
+  config:
+    import: "optional:file:.env[.properties]"
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/jsignal
+    username: jsignal
+    password: jsignal
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        jdbc:
+          batch_size: 500
+        order_inserts: true
+
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      base-path: /
+      exposure:
+        include: health
+
+app:
+  mqtt:
+    host: 127.0.0.1
+    port: 1883
+    topics: adsb/#
+  positions-max-rows: 200000
+
+---
+spring:
+  config:
+    activate:
+      on-profile: docker
+  datasource:
+    url: jdbc:postgresql://postgres:5432/jsignal
+
+app:
+  mqtt:
+    host: ${MQTT_HOST:host.docker.internal}

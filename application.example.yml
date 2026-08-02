@@ -1,0 +1,16 @@
+app:
+  mqtt:
+    host: 127.0.0.1
+    port: 1883
+    topics: adsb/#
+
+  positions-max-rows: 200000
+
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/jsignal
+    username: jsignal
+    password: jsignal
+
+server:
+  port: 8080
