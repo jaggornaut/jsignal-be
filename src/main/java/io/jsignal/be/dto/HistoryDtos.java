@@ -3,6 +3,7 @@ package io.jsignal.be.dto;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.util.List;
+import java.util.Map;
 
 public final class HistoryDtos {
 
@@ -42,7 +43,8 @@ public final class HistoryDtos {
             String label,
             long points,
             @JsonProperty("first_ms") long firstMs,
-            @JsonProperty("last_ms") long lastMs) {
+            @JsonProperty("last_ms") long lastMs,
+            Map<String, Object> attrs) {
     }
 
     public record ErrorResponse(String error) {

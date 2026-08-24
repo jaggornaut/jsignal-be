@@ -64,6 +64,7 @@ public interface TrackPointRepository extends JpaRepository<TrackPoint, Long> {
     @Query(value = """
             SELECT track_key AS "trackKey",
                    (ARRAY_AGG(label ORDER BY ts DESC) FILTER (WHERE label IS NOT NULL))[1] AS "label",
+                   (ARRAY_AGG(CAST(raw AS TEXT) ORDER BY ts DESC) FILTER (WHERE raw IS NOT NULL))[1] AS "raw",
                    COUNT(*) AS "points",
                    CAST(EXTRACT(EPOCH FROM MIN(ts)) * 1000 AS BIGINT) AS "firstMs",
                    CAST(EXTRACT(EPOCH FROM MAX(ts)) * 1000 AS BIGINT) AS "lastMs"
@@ -104,6 +105,7 @@ public interface TrackPointRepository extends JpaRepository<TrackPoint, Long> {
     interface TrackRow {
         String getTrackKey();
         String getLabel();
+        String getRaw();
         long getPoints();
         long getFirstMs();
         long getLastMs();

@@ -59,6 +59,44 @@ class PositionsApiIT {
 
     @Test
     @SuppressWarnings("unchecked")
+    void tracksExposeDomainSpecificFieldsFromTheLatestRawPayload() {
+        jdbc.update("""
+                        INSERT INTO track_points
+                            (id, domain, track_key, label, lat, lon, alt, speed_kts, heading_deg, ts, topic, raw)
+                        VALUES (nextval('track_points_id_seq'), 'ais', '247374900', NULL, 45.4, 12.3,
+                                NULL, 0.2, 82.3, ?, 'ais/vessel/247374900',
+                                '{"mmsi":"247374900","nav_status":"at anchor"}'::jsonb)
+                        """,
+                Timestamp.from(Instant.ofEpochMilli(BASE_MS)));
+        jdbc.update("""
+                        INSERT INTO track_points
+                            (id, domain, track_key, label, lat, lon, alt, speed_kts, heading_deg, ts, topic, raw)
+                        VALUES (nextval('track_points_id_seq'), 'ais', '247374900', 'MT.MITCHELL', 45.4, 12.3,
+                                NULL, 0.2, 82.3, ?, 'ais/vessel/247374900',
+                                '{"mmsi":"247374900","vessel_name":"MT.MITCHELL","nav_status":"under way using engine","destination":"VENEZIA","ship_type":"cargo"}'::jsonb)
+                        """,
+                Timestamp.from(Instant.ofEpochMilli(BASE_MS + 5_000)));
+
+        ResponseEntity<Map> response = rest.getForEntity(
+                "/api/v1/ais/tracks?from_ms={f}&to_ms={t}", Map.class, BASE_MS, BASE_MS + 10_000);
+
+        List<Map<String, Object>> tracks =
+                (List<Map<String, Object>>) response.getBody().get("tracks");
+        assertThat(tracks).hasSize(1);
+
+        Map<String, Object> track = tracks.get(0);
+        assertThat(track.get("track_key")).isEqualTo("247374900");
+        assertThat(track.get("label")).isEqualTo("MT.MITCHELL");
+
+        Map<String, Object> attrs = (Map<String, Object>) track.get("attrs");
+        assertThat(attrs)
+                .containsEntry("nav_status", "under way using engine")
+                .containsEntry("destination", "VENEZIA")
+                .containsEntry("ship_type", "cargo");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
     void positionsReturnsRowsInTsOrderWithExpectedStructure() {
         insertPoint("4D2228", "AZA123", 45.1, 9.1, BASE_MS + 2000);
         insertPoint("4D2228", "AZA123", 45.0, 9.0, BASE_MS);

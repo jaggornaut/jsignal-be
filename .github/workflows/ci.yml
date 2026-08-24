@@ -17,6 +17,5 @@ jobs:
           java-version: "21"
           cache: maven
 
-      # Integration tests start their own PostgreSQL via Testcontainers
       - name: Build and test
         run: ./mvnw -B verify

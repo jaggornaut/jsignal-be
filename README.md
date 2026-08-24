@@ -2,13 +2,17 @@
 
 Recorder and history API of the **[JSignal](https://github.com/jaggornaut/jsignal)** ecosystem. Subscribes to MQTT, stores every track point in PostgreSQL, serves the history over REST.
 
-```
-publishers ──MQTT──→ broker ──→ jsignal-be ──→ PostgreSQL
-                        │                           │
-        live clients ◄──┘         history clients ◄──┘ HTTP
+```mermaid
+flowchart LR
+    P[publishers] -->|MQTT| B[broker]
+    B -->|subscribe| BE[jsignal-be]
+    BE <--> DB[(PostgreSQL)]
+    BE -->|REST| H[history clients]
 ```
 
 One table holds track points of any signal domain. The domain is the first topic segment (`adsb/...`, `ais/...`): common fields become columns, everything else stays in a JSONB payload. Supporting a new domain means adding a decoder, not a migration.
+
+Two domains are decoded today: **ADS-B** aircraft and **AIS** vessels.
 
 ## Run
 
@@ -32,7 +36,7 @@ Defaults are in `src/main/resources/application.yml`. To override, copy `applica
 |----------|---------|---------|
 | `spring.datasource.url` | `jdbc:postgresql://localhost:5432/jsignal` | database |
 | `app.mqtt.host` / `app.mqtt.port` | `127.0.0.1` / `1883` | broker |
-| `app.mqtt.topics` | `adsb/#` | subscribed topics, comma-separated |
+| `app.mqtt.topics` | `adsb/#,ais/#` | subscribed topics, comma-separated |
 | `app.positions-max-rows` | `200000` | cap for `/positions`, 413 beyond it |
 | `app.retention-days` | unset | daily cleanup of older rows |
 
@@ -56,8 +60,6 @@ erDiagram
     }
 ```
 
-Indexed on `(domain, ts)` and `(domain, track_key, ts)`. Hibernate creates the schema from the entity.
-
 ## API
 
 Timestamps are epoch milliseconds UTC. History endpoints only return points that have a position.
@@ -68,7 +70,7 @@ Timestamps are epoch milliseconds UTC. History endpoints only return points that
 | `GET /api/v1/domains` | recorded domains with point counts |
 | `GET /api/v1/{domain}/range` | first and last timestamp, 204 if empty |
 | `GET /api/v1/{domain}/positions?from_ms&to_ms[&track_key][&interval_s]` | positions in a range, optionally one point per track every `interval_s` seconds |
-| `GET /api/v1/{domain}/tracks?from_ms&to_ms` | tracks seen in a range |
+| `GET /api/v1/{domain}/tracks?from_ms&to_ms` | tracks seen in a range, with their domain-specific attributes |
 
 ```bash
 curl "http://localhost:8080/api/v1/adsb/positions?from_ms=1718000000000&to_ms=1718003600000&interval_s=10"
@@ -79,10 +81,13 @@ curl "http://localhost:8080/api/v1/adsb/positions?from_ms=1718000000000&to_ms=17
                 "alt": 36000, "speed_kts": 450.25, "heading_deg": 270.5, "ts_ms": 1718000000000}]}
 ```
 
-## Development
-
 ```bash
-./mvnw verify
+curl "http://localhost:8080/api/v1/ais/tracks?from_ms=1786035000000&to_ms=1786036000000"
 ```
 
-Integration tests need Docker (Testcontainers).
+```json
+{"tracks": [{"track_key": "247214900", "label": null, "points": 5,
+             "first_ms": 1786035694269, "last_ms": 1786035784382,
+             "attrs": {"mmsi": "247214900", "sog_kts": 0.0, "cog_deg": 323.7,
+                       "nav_status": "under way using engine"}}]}
+```

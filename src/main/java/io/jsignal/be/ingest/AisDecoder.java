@@ -12,22 +12,21 @@ import java.time.Instant;
 import java.util.Optional;
 
 @Component
-public class AdsbDecoder implements DomainDecoder {
+public class AisDecoder implements DomainDecoder {
 
-    private static final Logger log = LoggerFactory.getLogger(AdsbDecoder.class);
+    private static final Logger log = LoggerFactory.getLogger(AisDecoder.class);
 
-    private static final String[] ALT_FIELDS =
-            {"altitude_barometric_ft", "altitude_barometric", "altitude_gps"};
+    private static final String[] LABEL_FIELDS = {"vessel_name", "call_sign"};
 
     private final ObjectMapper mapper;
 
-    public AdsbDecoder(ObjectMapper mapper) {
+    public AisDecoder(ObjectMapper mapper) {
         this.mapper = mapper;
     }
 
     @Override
     public String domainPrefix() {
-        return "adsb";
+        return "ais";
     }
 
     @Override
@@ -40,24 +39,23 @@ public class AdsbDecoder implements DomainDecoder {
                 return Optional.empty();
             }
 
-            String trackKey = PayloadJson.text(node.get("icao"));
+            String trackKey = PayloadJson.text(node.get("mmsi"));
             if (trackKey == null) {
-                log.debug("Missing or empty icao on topic {}, discarding", topic);
+                log.debug("Missing or empty mmsi on topic {}, discarding", topic);
                 return Optional.empty();
             }
 
-            String label = PayloadJson.text(node.get("callsign"));
+            String label = PayloadJson.text(PayloadJson.firstPresent(node, LABEL_FIELDS));
             Double lat = PayloadJson.parseDouble(node.get("latitude"));
             Double lon = PayloadJson.parseDouble(node.get("longitude"));
-            Float speedKts = PayloadJson.toFloat(PayloadJson.parseDouble(node.get("ground_speed_kts")));
-            Float headingDeg = PayloadJson.toFloat(PayloadJson.parseDouble(node.get("heading_deg")));
-            Integer alt = PayloadJson.toInt(PayloadJson.parseDouble(PayloadJson.firstPresent(node, ALT_FIELDS)));
+            Float speedKts = PayloadJson.toFloat(PayloadJson.parseDouble(node.get("sog_kts")));
+            Float courseDeg = PayloadJson.toFloat(PayloadJson.parseDouble(node.get("cog_deg")));
 
             Double epochMs = PayloadJson.parseDouble(node.get("last_seen_ms"));
             Instant ts = epochMs != null ? Instant.ofEpochMilli(epochMs.longValue()) : receivedAt;
 
             return Optional.of(new TrackPoint(domainPrefix(), trackKey, label, lat, lon,
-                    alt, speedKts, headingDeg, ts, topic, json));
+                    null, speedKts, courseDeg, ts, topic, json));
         } catch (Exception e) {
             log.debug("Failed to decode payload on topic {}: {}", topic, e.toString());
             return Optional.empty();

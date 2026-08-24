@@ -31,7 +31,7 @@ app:
   mqtt:
     host: 127.0.0.1
     port: 1883
-    topics: adsb/#
+    topics: adsb/#,ais/#
   positions-max-rows: 200000
 
 ---

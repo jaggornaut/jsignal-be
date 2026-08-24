@@ -1,5 +1,7 @@
 package io.jsignal.be.service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.jsignal.be.config.AppProperties;
 import io.jsignal.be.dto.HistoryDtos.DomainInfo;
 import io.jsignal.be.dto.HistoryDtos.Position;
@@ -13,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @Service
@@ -20,10 +23,13 @@ import java.util.Optional;
 public class HistoryService {
 
     private final TrackPointRepository repository;
+    private final ObjectMapper mapper;
     private final int maxRows;
 
-    public HistoryService(TrackPointRepository repository, AppProperties properties) {
+    public HistoryService(TrackPointRepository repository, ObjectMapper mapper,
+                          AppProperties properties) {
         this.repository = repository;
+        this.mapper = mapper;
         this.maxRows = properties.positionsMaxRows();
     }
 
@@ -69,8 +75,23 @@ public class HistoryService {
         return repository.findTracks(domain,
                         Instant.ofEpochMilli(fromMs), Instant.ofEpochMilli(toMs)).stream()
                 .map(row -> new Track(row.getTrackKey(), row.getLabel(),
-                        row.getPoints(), row.getFirstMs(), row.getLastMs()))
+                        row.getPoints(), row.getFirstMs(), row.getLastMs(),
+                        parseAttrs(row.getRaw())))
                 .toList();
+    }
+
+    private Map<String, Object> parseAttrs(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return Map.of();
+        }
+        try {
+            Map<String, Object> parsed =
+                    mapper.readValue(raw, new TypeReference<Map<String, Object>>() {
+                    });
+            return parsed == null ? Map.of() : parsed;
+        } catch (Exception e) {
+            return Map.of();
+        }
     }
 
     private static void validateRange(long fromMs, long toMs) {
