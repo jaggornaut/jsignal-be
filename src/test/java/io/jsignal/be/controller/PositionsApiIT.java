@@ -1,5 +1,6 @@
 package io.jsignal.be.controller;
 
+import io.jsignal.be.TestDatabase;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -22,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.data.Offset.offset;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Testcontainers
@@ -33,9 +35,12 @@ class PositionsApiIT {
 
     @Container
     @ServiceConnection
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16");
+    static PostgreSQLContainer<?> postgres = TestDatabase.container();
 
     private static final long BASE_MS = 1_718_000_000_000L;
+
+    private static final float ALT_36000FT_M = 10972.8f;
+    private static final float SPEED_450KTS_MPS = 231.62842f;
 
     @Autowired
     TestRestTemplate rest;
@@ -44,38 +49,40 @@ class PositionsApiIT {
     JdbcTemplate jdbc;
 
     @BeforeEach
-    void cleanTable() {
-        jdbc.update("DELETE FROM track_points");
+    void cleanTables() {
+        jdbc.update("DELETE FROM position");
+        jdbc.update("DELETE FROM contact");
     }
 
-    private void insertPoint(String trackKey, String label, Double lat, Double lon, long tsMs) {
-        jdbc.update("""
-                        INSERT INTO track_points
-                            (id, domain, track_key, label, lat, lon, alt, speed_kts, heading_deg, ts, topic, raw)
-                        VALUES (nextval('track_points_id_seq'), 'adsb', ?, ?, ?, ?, 36000, 450.25, 270.5, ?, 'adsb/aircraft/' || ?, '{}'::jsonb)
-                        """,
-                trackKey, label, lat, lon, Timestamp.from(Instant.ofEpochMilli(tsMs)), trackKey);
+    private long contact(String domain, String identifier, String name, String details) {
+        return jdbc.queryForObject("""
+                        INSERT INTO contact (domain, identifier, name, first_seen, last_seen, details)
+                        VALUES (?, ?, ?, ?, ?, CAST(? AS jsonb))
+                        RETURNING id
+                        """, Long.class,
+                domain, identifier, name,
+                Timestamp.from(Instant.ofEpochMilli(BASE_MS)),
+                Timestamp.from(Instant.ofEpochMilli(BASE_MS)), details);
     }
+
+    private void position(long contactId, String domain, double lat, double lon, long tsMs) {
+        jdbc.update("""
+                        INSERT INTO position
+                            (ts, contact_id, domain, method, lat, lon, alt_m, speed_mps, course_deg)
+                        VALUES (?, ?, ?, 'reported', ?, ?, ?, ?, 270.5)
+                        """,
+                Timestamp.from(Instant.ofEpochMilli(tsMs)), contactId, domain, lat, lon,
+                ALT_36000FT_M, SPEED_450KTS_MPS);
+        }
 
     @Test
     @SuppressWarnings("unchecked")
-    void tracksExposeDomainSpecificFieldsFromTheLatestRawPayload() {
-        jdbc.update("""
-                        INSERT INTO track_points
-                            (id, domain, track_key, label, lat, lon, alt, speed_kts, heading_deg, ts, topic, raw)
-                        VALUES (nextval('track_points_id_seq'), 'ais', '247374900', NULL, 45.4, 12.3,
-                                NULL, 0.2, 82.3, ?, 'ais/vessel/247374900',
-                                '{"mmsi":"247374900","nav_status":"at anchor"}'::jsonb)
-                        """,
-                Timestamp.from(Instant.ofEpochMilli(BASE_MS)));
-        jdbc.update("""
-                        INSERT INTO track_points
-                            (id, domain, track_key, label, lat, lon, alt, speed_kts, heading_deg, ts, topic, raw)
-                        VALUES (nextval('track_points_id_seq'), 'ais', '247374900', 'MT.MITCHELL', 45.4, 12.3,
-                                NULL, 0.2, 82.3, ?, 'ais/vessel/247374900',
-                                '{"mmsi":"247374900","vessel_name":"MT.MITCHELL","nav_status":"under way using engine","destination":"VENEZIA","ship_type":"cargo"}'::jsonb)
-                        """,
-                Timestamp.from(Instant.ofEpochMilli(BASE_MS + 5_000)));
+    void tracksExposeDomainSpecificFieldsFromTheContactDetails() {
+        long id = contact("ais", "247374900", "MT.MITCHELL", """
+                {"mmsi":"247374900","vessel_name":"MT.MITCHELL","nav_status":"under way using engine",\
+                "destination":"VENEZIA","ship_type":"cargo"}""");
+        position(id, "ais", 45.4, 12.3, BASE_MS);
+        position(id, "ais", 45.4, 12.3, BASE_MS + 5_000);
 
         ResponseEntity<Map> response = rest.getForEntity(
                 "/api/v1/ais/tracks?from_ms={f}&to_ms={t}", Map.class, BASE_MS, BASE_MS + 10_000);
@@ -87,6 +94,9 @@ class PositionsApiIT {
         Map<String, Object> track = tracks.get(0);
         assertThat(track.get("track_key")).isEqualTo("247374900");
         assertThat(track.get("label")).isEqualTo("MT.MITCHELL");
+        assertThat(((Number) track.get("points")).longValue()).isEqualTo(2);
+        assertThat(((Number) track.get("first_ms")).longValue()).isEqualTo(BASE_MS);
+        assertThat(((Number) track.get("last_ms")).longValue()).isEqualTo(BASE_MS + 5_000);
 
         Map<String, Object> attrs = (Map<String, Object>) track.get("attrs");
         assertThat(attrs)
@@ -97,10 +107,11 @@ class PositionsApiIT {
 
     @Test
     @SuppressWarnings("unchecked")
-    void positionsReturnsRowsInTsOrderWithExpectedStructure() {
-        insertPoint("4D2228", "AZA123", 45.1, 9.1, BASE_MS + 2000);
-        insertPoint("4D2228", "AZA123", 45.0, 9.0, BASE_MS);
-        insertPoint("4D2228", null, null, null, BASE_MS + 1000);
+    void positionsReturnsRowsInTsOrderWithFieldNamesAndUnitsUnchanged() {
+        long id = contact("adsb", "4D2228", "AZA123", "{}");
+        position(id, "adsb", 45.1, 9.1, BASE_MS + 2000);
+        position(id, "adsb", 45.0, 9.0, BASE_MS);
+        contact("adsb", "AB1234", null, "{}");
 
         ResponseEntity<Map> response = rest.getForEntity(
                 "/api/v1/adsb/positions?from_ms={f}&to_ms={t}", Map.class, BASE_MS, BASE_MS + 10_000);
@@ -116,7 +127,8 @@ class PositionsApiIT {
         assertThat((Double) first.get("lat")).isEqualTo(45.0);
         assertThat((Double) first.get("lon")).isEqualTo(9.0);
         assertThat(first.get("alt")).isEqualTo(36000);
-        assertThat(((Number) first.get("speed_kts")).doubleValue()).isEqualTo(450.25);
+        assertThat(((Number) first.get("speed_kts")).doubleValue())
+                .isCloseTo(450.25, offset(0.01));
         assertThat(((Number) first.get("heading_deg")).doubleValue()).isEqualTo(270.5);
         assertThat(((Number) first.get("ts_ms")).longValue()).isEqualTo(BASE_MS);
         assertThat(((Number) positions.get(1).get("ts_ms")).longValue()).isEqualTo(BASE_MS + 2000);
@@ -125,10 +137,12 @@ class PositionsApiIT {
     @Test
     @SuppressWarnings("unchecked")
     void downsamplingKeepsAtMostOneRowPerTrackAndBucket() {
+        long first = contact("adsb", "4D2228", "AZA123", "{}");
         for (int i = 0; i < 8; i++) {
-            insertPoint("4D2228", "AZA123", 45.0 + i, 9.0, BASE_MS + i * 1000L);
+            position(first, "adsb", 45.0 + i, 9.0, BASE_MS + i * 1000L);
         }
-        insertPoint("AB1234", "XYZ", 50.0, 8.0, BASE_MS + 1000);
+        long second = contact("adsb", "AB1234", "XYZ", "{}");
+        position(second, "adsb", 50.0, 8.0, BASE_MS + 1000);
 
         ResponseEntity<Map> response = rest.getForEntity(
                 "/api/v1/adsb/positions?from_ms={f}&to_ms={t}&interval_s=5",
@@ -147,8 +161,10 @@ class PositionsApiIT {
     @Test
     @SuppressWarnings("unchecked")
     void trackKeyFilterReturnsOnlyThatTrack() {
-        insertPoint("4D2228", "AZA123", 45.0, 9.0, BASE_MS);
-        insertPoint("AB1234", "XYZ", 50.0, 8.0, BASE_MS);
+        long first = contact("adsb", "4D2228", "AZA123", "{}");
+        position(first, "adsb", 45.0, 9.0, BASE_MS);
+        long second = contact("adsb", "AB1234", "XYZ", "{}");
+        position(second, "adsb", 50.0, 8.0, BASE_MS);
 
         ResponseEntity<Map> response = rest.getForEntity(
                 "/api/v1/adsb/positions?from_ms={f}&to_ms={t}&track_key=AB1234",
@@ -162,8 +178,9 @@ class PositionsApiIT {
 
     @Test
     void exceedingRowCapReturns413WithExactErrorBody() {
+        long id = contact("adsb", "4D2228", "AZA123", "{}");
         for (int i = 0; i < 11; i++) {
-            insertPoint("4D2228", "AZA123", 45.0, 9.0, BASE_MS + i * 1000L);
+            position(id, "adsb", 45.0, 9.0, BASE_MS + i * 1000L);
         }
 
         ResponseEntity<Map> response = rest.getForEntity(
@@ -186,8 +203,9 @@ class PositionsApiIT {
     @Test
     @SuppressWarnings("unchecked")
     void domainsRangeTracksAndHealthEndpoints() {
-        insertPoint("4D2228", "AZA123", 45.0, 9.0, BASE_MS);
-        insertPoint("4D2228", "AZA123", 45.1, 9.1, BASE_MS + 5000);
+        long id = contact("adsb", "4D2228", "AZA123", "{}");
+        position(id, "adsb", 45.0, 9.0, BASE_MS);
+        position(id, "adsb", 45.1, 9.1, BASE_MS + 5000);
 
         ResponseEntity<Map> domains = rest.getForEntity("/api/v1/domains", Map.class);
         assertThat(domains.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -220,6 +238,23 @@ class PositionsApiIT {
         ResponseEntity<Map> health = rest.getForEntity("/health", Map.class);
         assertThat(health.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(health.getBody().get("status")).isEqualTo("UP");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void contactsWithoutPositionsAreAbsentFromEveryEndpoint() {
+        contact("adsb", "AB1234", "XYZ", "{}");
+
+        ResponseEntity<Map> positions = rest.getForEntity(
+                "/api/v1/adsb/positions?from_ms={f}&to_ms={t}", Map.class, BASE_MS, BASE_MS + 10_000);
+        assertThat((List<Map<String, Object>>) positions.getBody().get("positions")).isEmpty();
+
+        ResponseEntity<Map> tracks = rest.getForEntity(
+                "/api/v1/adsb/tracks?from_ms={f}&to_ms={t}", Map.class, BASE_MS, BASE_MS + 10_000);
+        assertThat((List<Map<String, Object>>) tracks.getBody().get("tracks")).isEmpty();
+
+        assertThat(rest.getForEntity("/api/v1/adsb/range", Map.class).getStatusCode())
+                .isEqualTo(HttpStatus.NO_CONTENT);
     }
 
     @Test

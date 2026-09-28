@@ -1,16 +1,10 @@
 # jsignal-be
 
-Recorder and history API of the **[JSignal](https://github.com/jaggornaut/jsignal)** ecosystem. Subscribes to MQTT, stores every track point in PostgreSQL, serves the history over REST.
+Recorder and history API of the **[JSignal](https://github.com/jaggornaut/jsignal)** ecosystem. Subscribes to MQTT, records contacts and their positions in TimescaleDB, serves the history over REST.
 
-```mermaid
-flowchart LR
-    P[publishers] -->|MQTT| B[broker]
-    B -->|subscribe| BE[jsignal-be]
-    BE <--> DB[(PostgreSQL)]
-    BE -->|REST| H[history clients]
-```
 
-One table holds track points of any signal domain. The domain is the first topic segment (`adsb/...`, `ais/...`): common fields become columns, everything else stays in a JSONB payload. Supporting a new domain means adding a decoder, not a migration.
+
+Every signal domain shares the same three tables. The domain is the first topic segment (`adsb/...`, `ais/...`): identity and slow-changing attributes belong to a contact, positions are time-series rows, and anything domain-specific stays in a JSONB payload. Supporting a new domain means adding a decoder, not a migration.
 
 Two domains are decoded today: **ADS-B** aircraft and **AIS** vessels.
 
@@ -20,9 +14,9 @@ Two domains are decoded today: **ADS-B** aircraft and **AIS** vessels.
 docker compose up -d
 ```
 
-Starts PostgreSQL and the backend on `http://localhost:8080`. Database and schema are created on first start. The MQTT broker is expected on the host; for a remote one, `MQTT_HOST=<host> docker compose up -d`. Add `--build` to build the image instead of pulling it.
+Starts TimescaleDB and the backend on `http://localhost:8080`. The database is created by the container, the schema by Flyway on first start. The MQTT broker is expected on the host; for a remote one, `MQTT_HOST=<host> docker compose up -d`. Add `--build` to build the image instead of pulling it.
 
-Natively, with Java 21 and a reachable PostgreSQL:
+Natively, with Java 21 and a reachable TimescaleDB:
 
 ```bash
 ./mvnw spring-boot:run
@@ -38,27 +32,18 @@ Defaults are in `src/main/resources/application.yml`. To override, copy `applica
 | `app.mqtt.host` / `app.mqtt.port` | `127.0.0.1` / `1883` | broker |
 | `app.mqtt.topics` | `adsb/#,ais/#` | subscribed topics, comma-separated |
 | `app.positions-max-rows` | `200000` | cap for `/positions`, 413 beyond it |
-| `app.retention-days` | unset | daily cleanup of older rows |
+| `app.retention-days` | unset | daily drop of position chunks older than this |
+| `app.receiver-name` | `venezia-1` | receiver this instance attributes positions to |
 
 ## Data model
 
-```mermaid
-erDiagram
-    TRACK_POINTS {
-        bigserial id PK
-        text domain "adsb, ais, ..."
-        text track_key "ICAO24, MMSI, ..."
-        text label "callsign, vessel name"
-        double_precision lat
-        double_precision lon
-        integer alt
-        real speed_kts
-        real heading_deg
-        timestamptz ts
-        text topic
-        jsonb raw "original payload"
-    }
-```
+![Database schema: receiver, contact and position](docs/images/schema.svg)
+
+`position` is a TimescaleDB hypertable partitioned by day, compressed after a week. Positions are stored in SI units and converted back to feet and knots by the API. `course_deg` is the direction of travel, `heading_deg` where the vessel actually points — only some protocols report both.
+
+`method` records how a position was obtained: `reported` by the target, `computed` from several receivers, or `predicted` from orbital elements. A position that was not measured by a single receiver has no `receiver_id`.
+
+Flyway owns the schema; Hibernate only validates it.
 
 ## API
 
@@ -71,6 +56,11 @@ Timestamps are epoch milliseconds UTC. History endpoints only return points that
 | `GET /api/v1/{domain}/range` | first and last timestamp, 204 if empty |
 | `GET /api/v1/{domain}/positions?from_ms&to_ms[&track_key][&interval_s]` | positions in a range, optionally one point per track every `interval_s` seconds |
 | `GET /api/v1/{domain}/tracks?from_ms&to_ms` | tracks seen in a range, with their domain-specific attributes |
+
+`domains` counts stored positions, not received messages. Messages that carry identity or
+attributes without a position — ADS-B velocity-only frames, AIS static reports — update the
+contact and are not counted here, so the totals are lower than the message counts reported
+before the `receiver`/`contact`/`position` schema.
 
 ```bash
 curl "http://localhost:8080/api/v1/adsb/positions?from_ms=1718000000000&to_ms=1718003600000&interval_s=10"

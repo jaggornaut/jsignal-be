@@ -2,7 +2,7 @@ package io.jsignal.be.ingest;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.jsignal.be.entity.TrackPoint;
+import io.jsignal.be.Units;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -31,7 +31,7 @@ public class AdsbDecoder implements DomainDecoder {
     }
 
     @Override
-    public Optional<TrackPoint> decode(String topic, byte[] payload, Instant receivedAt) {
+    public Optional<ContactSnapshot> decode(String topic, byte[] payload, Instant receivedAt) {
         try {
             String json = new String(payload, StandardCharsets.UTF_8);
             JsonNode node = mapper.readTree(json);
@@ -40,24 +40,26 @@ public class AdsbDecoder implements DomainDecoder {
                 return Optional.empty();
             }
 
-            String trackKey = PayloadJson.text(node.get("icao"));
-            if (trackKey == null) {
+            String identifier = PayloadJson.text(node.get("icao"));
+            if (identifier == null) {
                 log.debug("Missing or empty icao on topic {}, discarding", topic);
                 return Optional.empty();
             }
 
-            String label = PayloadJson.text(node.get("callsign"));
+            String name = PayloadJson.text(node.get("callsign"));
             Double lat = PayloadJson.parseDouble(node.get("latitude"));
             Double lon = PayloadJson.parseDouble(node.get("longitude"));
-            Float speedKts = PayloadJson.toFloat(PayloadJson.parseDouble(node.get("ground_speed_kts")));
-            Float headingDeg = PayloadJson.toFloat(PayloadJson.parseDouble(node.get("heading_deg")));
-            Integer alt = PayloadJson.toInt(PayloadJson.parseDouble(PayloadJson.firstPresent(node, ALT_FIELDS)));
+            Float speedMps =
+                    Units.knotsToMps(PayloadJson.parseDouble(node.get("ground_speed_kts")));
+            Float courseDeg = PayloadJson.toFloat(PayloadJson.parseDouble(node.get("heading_deg")));
+            Float altM = Units.feetToMetres(
+                    PayloadJson.parseDouble(PayloadJson.firstPresent(node, ALT_FIELDS)));
 
             Double epochMs = PayloadJson.parseDouble(node.get("last_seen_ms"));
             Instant ts = epochMs != null ? Instant.ofEpochMilli(epochMs.longValue()) : receivedAt;
 
-            return Optional.of(new TrackPoint(domainPrefix(), trackKey, label, lat, lon,
-                    alt, speedKts, headingDeg, ts, topic, json));
+            return Optional.of(new ContactSnapshot(domainPrefix(), identifier, name, ts, topic,
+                    json, lat, lon, altM, speedMps, courseDeg, null));
         } catch (Exception e) {
             log.debug("Failed to decode payload on topic {}: {}", topic, e.toString());
             return Optional.empty();

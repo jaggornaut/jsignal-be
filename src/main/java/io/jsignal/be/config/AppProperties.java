@@ -9,6 +9,7 @@ import java.util.List;
 public record AppProperties(
         @DefaultValue Mqtt mqtt,
         @DefaultValue("200000") int positionsMaxRows,
+        @DefaultValue("venezia-1") String receiverName,
         Integer retentionDays) {
 
     public record Mqtt(

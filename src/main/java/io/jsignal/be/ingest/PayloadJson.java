@@ -50,7 +50,10 @@ final class PayloadJson {
         return d == null ? null : d.floatValue();
     }
 
-    static Integer toInt(Double d) {
-        return d == null ? null : (int) Math.round(d);
+    static Float bearing(Double d) {
+        if (d == null || d < 0 || d >= 360) {
+            return null;
+        }
+        return d.floatValue();
     }
 }

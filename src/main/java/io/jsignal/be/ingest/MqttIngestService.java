@@ -33,7 +33,7 @@ public class MqttIngestService implements SmartLifecycle, MqttCallbackExtended {
 
     private final AppProperties.Mqtt properties;
     private final Map<String, DomainDecoder> decoders;
-    private final TrackPointWriter writer;
+    private final IngestWriter writer;
     private final ScheduledExecutorService connectExecutor =
             Executors.newSingleThreadScheduledExecutor(r -> {
                 Thread t = new Thread(r, "mqtt-connect");
@@ -45,7 +45,7 @@ public class MqttIngestService implements SmartLifecycle, MqttCallbackExtended {
     private volatile boolean running;
 
     public MqttIngestService(AppProperties appProperties, List<DomainDecoder> decoders,
-                             TrackPointWriter writer) {
+                             IngestWriter writer) {
         this.properties = appProperties.mqtt();
         this.decoders = decoders.stream()
                 .collect(Collectors.toUnmodifiableMap(DomainDecoder::domainPrefix, Function.identity()));

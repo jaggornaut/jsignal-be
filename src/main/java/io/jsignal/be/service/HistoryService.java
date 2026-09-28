@@ -7,9 +7,9 @@ import io.jsignal.be.dto.HistoryDtos.DomainInfo;
 import io.jsignal.be.dto.HistoryDtos.Position;
 import io.jsignal.be.dto.HistoryDtos.RangeResponse;
 import io.jsignal.be.dto.HistoryDtos.Track;
-import io.jsignal.be.repository.TrackPointRepository;
-import io.jsignal.be.repository.TrackPointRepository.PositionRow;
-import io.jsignal.be.repository.TrackPointRepository.TimeRange;
+import io.jsignal.be.repository.PositionRepository;
+import io.jsignal.be.repository.PositionRepository.PositionRow;
+import io.jsignal.be.repository.PositionRepository.TimeRange;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,11 +22,11 @@ import java.util.Optional;
 @Transactional(readOnly = true)
 public class HistoryService {
 
-    private final TrackPointRepository repository;
+    private final PositionRepository repository;
     private final ObjectMapper mapper;
     private final int maxRows;
 
-    public HistoryService(TrackPointRepository repository, ObjectMapper mapper,
+    public HistoryService(PositionRepository repository, ObjectMapper mapper,
                           AppProperties properties) {
         this.repository = repository;
         this.mapper = mapper;
@@ -35,17 +35,17 @@ public class HistoryService {
 
     public List<DomainInfo> domains() {
         return repository.countByDomain().stream()
-                .map(row -> new DomainInfo(row.getDomain(), row.getPoints()))
+                .map(row -> new DomainInfo(row.domain(), row.points()))
                 .toList();
     }
 
     public Optional<RangeResponse> range(String domain) {
         TimeRange range = repository.findRange(domain);
-        if (range.getFirstTs() == null || range.getLastTs() == null) {
+        if (range == null || range.firstTs() == null || range.lastTs() == null) {
             return Optional.empty();
         }
         return Optional.of(new RangeResponse(
-                range.getFirstTs().toEpochMilli(), range.getLastTs().toEpochMilli()));
+                range.firstTs().toEpochMilli(), range.lastTs().toEpochMilli()));
     }
 
     public List<Position> positions(String domain, long fromMs, long toMs,
@@ -64,9 +64,9 @@ public class HistoryService {
             throw new TooManyRowsException();
         }
         return rows.stream()
-                .map(row -> new Position(row.getTrackKey(), row.getLabel(),
-                        row.getLat(), row.getLon(), row.getAlt(),
-                        row.getSpeedKts(), row.getHeadingDeg(), row.getTsMs()))
+                .map(row -> Position.fromStored(row.trackKey(), row.label(),
+                        row.lat(), row.lon(), row.altM(),
+                        row.speedMps(), row.courseDeg(), row.tsMs()))
                 .toList();
     }
 
@@ -74,9 +74,9 @@ public class HistoryService {
         validateRange(fromMs, toMs);
         return repository.findTracks(domain,
                         Instant.ofEpochMilli(fromMs), Instant.ofEpochMilli(toMs)).stream()
-                .map(row -> new Track(row.getTrackKey(), row.getLabel(),
-                        row.getPoints(), row.getFirstMs(), row.getLastMs(),
-                        parseAttrs(row.getRaw())))
+                .map(row -> new Track(row.trackKey(), row.label(),
+                        row.points(), row.firstMs(), row.lastMs(),
+                        parseAttrs(row.details())))
                 .toList();
     }
 

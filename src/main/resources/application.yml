@@ -7,15 +7,20 @@ spring:
     username: jsignal
     password: jsignal
 
+  flyway:
+    baseline-on-migrate: true
+    baseline-version: 0
+
   jpa:
     open-in-view: false
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
     properties:
       hibernate:
         jdbc:
           batch_size: 500
         order_inserts: true
+        order_updates: true
 
 server:
   port: 8080
@@ -33,6 +38,7 @@ app:
     port: 1883
     topics: adsb/#,ais/#
   positions-max-rows: 200000
+  receiver-name: venezia-1
 
 ---
 spring:

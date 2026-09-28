@@ -1,7 +1,6 @@
 package io.jsignal.be.ingest;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.jsignal.be.entity.TrackPoint;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -9,6 +8,7 @@ import java.time.Instant;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.data.Offset.offset;
 
 class AisDecoderTest {
 
@@ -17,13 +17,13 @@ class AisDecoderTest {
 
     private final AisDecoder decoder = new AisDecoder(new ObjectMapper());
 
-    private Optional<TrackPoint> decode(String json) {
+    private Optional<ContactSnapshot> decode(String json) {
         return decoder.decode(TOPIC, json.getBytes(StandardCharsets.UTF_8), RECEIVED_AT);
     }
 
     @Test
     void decodesPayloadPublishedByAisModule() {
-        TrackPoint p = decode("""
+        ContactSnapshot s = decode("""
                 {
                   "mmsi": "247374900",
                   "vessel_name": "MT.MITCHELL",
@@ -42,43 +42,67 @@ class AisDecoderTest {
                 }
                 """).orElseThrow();
 
-        assertThat(p.getDomain()).isEqualTo("ais");
-        assertThat(p.getTrackKey()).isEqualTo("247374900");
-        assertThat(p.getLabel()).isEqualTo("MT.MITCHELL");
-        assertThat(p.getLat()).isEqualTo(45.4321);
-        assertThat(p.getLon()).isEqualTo(12.3456);
-        assertThat(p.getSpeedKts()).isEqualTo(12.3f);
-        assertThat(p.getTs()).isEqualTo(Instant.ofEpochMilli(1786032112570L));
-        assertThat(p.getTopic()).isEqualTo(TOPIC);
+        assertThat(s.domain()).isEqualTo("ais");
+        assertThat(s.identifier()).isEqualTo("247374900");
+        assertThat(s.name()).isEqualTo("MT.MITCHELL");
+        assertThat(s.lat()).isEqualTo(45.4321);
+        assertThat(s.lon()).isEqualTo(12.3456);
+        assertThat(s.speedMps()).isCloseTo(6.3277f, offset(0.001f));
+        assertThat(s.ts()).isEqualTo(Instant.ofEpochMilli(1786032112570L));
+        assertThat(s.topic()).isEqualTo(TOPIC);
     }
 
     @Test
-    void headingColumnCarriesCourseOverGroundNotTrueHeading() {
-        TrackPoint p = decode("""
+    void courseCarriesCourseOverGroundAndHeadingCarriesTrueHeading() {
+        ContactSnapshot s = decode("""
                 {"mmsi": "247374900", "latitude": 45.4, "longitude": 12.3,
                  "cog_deg": 245.1, "heading_deg": 243}
                 """).orElseThrow();
 
-        assertThat(p.getHeadingDeg()).isEqualTo(245.1f);
+        assertThat(s.courseDeg()).isEqualTo(245.1f);
+        assertThat(s.headingDeg()).isEqualTo(243.0f);
+    }
+
+    @Test
+    void trueHeadingIsNullWhenTheModuleDoesNotPublishIt() {
+        ContactSnapshot s = decode("""
+                {"mmsi": "247374900", "latitude": 45.4, "longitude": 12.3, "cog_deg": 245.1}
+                """).orElseThrow();
+
+        assertThat(s.courseDeg()).isEqualTo(245.1f);
+        assertThat(s.headingDeg()).isNull();
+    }
+
+    @Test
+    void outOfRangeTrueHeadingIsRejected() {
+        assertThat(decode("""
+                {"mmsi": "1", "latitude": 45.4, "longitude": 12.3, "heading_deg": 511}
+                """).orElseThrow().headingDeg()).isNull();
+        assertThat(decode("""
+                {"mmsi": "1", "latitude": 45.4, "longitude": 12.3, "heading_deg": 360}
+                """).orElseThrow().headingDeg()).isNull();
+        assertThat(decode("""
+                {"mmsi": "1", "latitude": 45.4, "longitude": 12.3, "heading_deg": 359}
+                """).orElseThrow().headingDeg()).isEqualTo(359.0f);
     }
 
     @Test
     void altitudeIsAlwaysNullForVessels() {
-        TrackPoint p = decode("""
+        ContactSnapshot s = decode("""
                 {"mmsi": "247374900", "latitude": 45.4, "longitude": 12.3}
                 """).orElseThrow();
 
-        assertThat(p.getAlt()).isNull();
+        assertThat(s.altM()).isNull();
     }
 
     @Test
     void keepsWholePayloadInRawSoDomainSpecificFieldsSurvive() {
-        TrackPoint p = decode("""
+        ContactSnapshot s = decode("""
                 {"mmsi": "247374900", "latitude": 45.4, "longitude": 12.3,
                  "nav_status": "at anchor", "destination": "VENEZIA", "draught_m": 6.0}
                 """).orElseThrow();
 
-        assertThat(p.getRawJson())
+        assertThat(s.rawJson())
                 .contains("\"nav_status\"")
                 .contains("\"destination\"")
                 .contains("\"draught_m\"");
@@ -86,24 +110,25 @@ class AisDecoderTest {
 
     @Test
     void baseStationReportsHaveNoNameAndNoSpeed() {
-        TrackPoint p = decode("""
+        ContactSnapshot s = decode("""
                 {"mmsi": "002470137", "base_station": true,
                  "latitude": 45.451815, "longitude": 12.254981666666668}
                 """).orElseThrow();
 
-        assertThat(p.getTrackKey()).isEqualTo("002470137");
-        assertThat(p.getLabel()).isNull();
-        assertThat(p.getSpeedKts()).isNull();
-        assertThat(p.getHeadingDeg()).isNull();
+        assertThat(s.identifier()).isEqualTo("002470137");
+        assertThat(s.name()).isNull();
+        assertThat(s.speedMps()).isNull();
+        assertThat(s.courseDeg()).isNull();
+        assertThat(s.headingDeg()).isNull();
     }
 
     @Test
     void fallsBackToReceptionTimeWhenTimestampIsMissing() {
-        TrackPoint p = decode("""
+        ContactSnapshot s = decode("""
                 {"mmsi": "247374900", "latitude": 45.4, "longitude": 12.3}
                 """).orElseThrow();
 
-        assertThat(p.getTs()).isEqualTo(RECEIVED_AT);
+        assertThat(s.ts()).isEqualTo(RECEIVED_AT);
     }
 
     @Test

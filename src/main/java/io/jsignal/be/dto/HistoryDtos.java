@@ -1,6 +1,7 @@
 package io.jsignal.be.dto;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import io.jsignal.be.Units;
 
 import java.util.List;
 import java.util.Map;
@@ -33,6 +34,12 @@ public final class HistoryDtos {
             @JsonProperty("speed_kts") Float speedKts,
             @JsonProperty("heading_deg") Float headingDeg,
             @JsonProperty("ts_ms") long tsMs) {
+
+        public static Position fromStored(String trackKey, String label, double lat, double lon,
+                                          Float altM, Float speedMps, Float courseDeg, long tsMs) {
+            return new Position(trackKey, label, lat, lon,
+                    Units.metresToFeet(altM), Units.mpsToKnots(speedMps), courseDeg, tsMs);
+        }
     }
 
     public record TracksResponse(List<Track> tracks) {

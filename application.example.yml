@@ -6,11 +6,27 @@ app:
 
   positions-max-rows: 200000
 
+  # Name of the receiver this backend records for. Must match a row in the
+  # receiver table; the row is created on first write if it does not exist yet.
+  # Every position written by the ingest path is attributed to it.
+  receiver-name: venezia-1
+
+  # Optional. When set, a nightly job drops position chunks older than this many
+  # days. Unset means keep everything. Chunks are dropped whole, so data is kept
+  # until the entire day it lives in has aged out.
+  # retention-days: 90
+
 spring:
   datasource:
     url: jdbc:postgresql://localhost:5432/jsignal
     username: jsignal
     password: jsignal
+
+  # Flyway owns the schema: the application only validates that the entities
+  # still match what the migrations created. Never set this to update.
+  jpa:
+    hibernate:
+      ddl-auto: validate
 
 server:
   port: 8080
